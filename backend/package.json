@@ -1,0 +1,27 @@
+{
+  "name": "wa-supervisor-v3-backend",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/server.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.49.1",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.2",
+    "qrcode": "^1.5.4",
+    "puppeteer": "^23.11.1",
+    "socket.io": "^4.8.1",
+    "whatsapp-web.js": "^1.29.1"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.3",
+    "@types/node": "^22.13.10",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.2"
+  }
+}
