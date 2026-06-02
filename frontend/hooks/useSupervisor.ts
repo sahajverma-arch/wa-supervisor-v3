@@ -127,6 +127,12 @@ export function useSupervisor() {
       setEmployees(current =>
         current.map(employee => (employee.id === payload.employee.id ? { ...employee, ...payload.employee } : employee))
       );
+      if (payload.employee.session_key === connectSessionKey) {
+        setConnectQrDataUrl(null);
+        setConnectModalOpen(false);
+        setConnectSessionKey(null);
+        setConnectEmployeeName(null);
+      }
     };
 
     const handleEmployeeDisconnected = (payload: SocketEmployeeDisconnectedPayload) => {
@@ -191,20 +197,30 @@ export function useSupervisor() {
     };
 
     socket.on('qr_generated', handleQr);
+    socket.on('qr.generated', handleQr);
     socket.on('employee_connected', handleEmployeeConnected);
+    socket.on('employee.updated', handleEmployeeConnected);
     socket.on('employee_disconnected', handleEmployeeDisconnected);
+    socket.on('employee.deleted', handleEmployeeDeleted);
     socket.on('employee_deleted', handleEmployeeDeleted);
     socket.on('chat_updated', handleChatUpdated);
+    socket.on('chat.updated', handleChatUpdated);
     socket.on('message_received', handleMessageReceived);
+    socket.on('message.created', handleMessageReceived);
     socket.on('history_synced', handleHistorySynced);
 
     return () => {
       socket.off('qr_generated', handleQr);
+      socket.off('qr.generated', handleQr);
       socket.off('employee_connected', handleEmployeeConnected);
+      socket.off('employee.updated', handleEmployeeConnected);
       socket.off('employee_disconnected', handleEmployeeDisconnected);
+      socket.off('employee.deleted', handleEmployeeDeleted);
       socket.off('employee_deleted', handleEmployeeDeleted);
       socket.off('chat_updated', handleChatUpdated);
+      socket.off('chat.updated', handleChatUpdated);
       socket.off('message_received', handleMessageReceived);
+      socket.off('message.created', handleMessageReceived);
       socket.off('history_synced', handleHistorySynced);
     };
   }, [chatSearch, connectSessionKey, selectedChatId, selectedEmployee?.id, selectedSessionKey]);

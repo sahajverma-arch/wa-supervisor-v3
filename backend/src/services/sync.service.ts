@@ -1,6 +1,5 @@
 import type { Client, Chat, Message as WAMessage } from 'whatsapp-web.js';
-import { socketEvents } from '../socket/events.js';
-import { getSocketServer } from '../socket/index.js';
+import { emitRealtimeEvent } from '../socket/broadcast.js';
 import { getEmployeeSession, updateEmployeeSession } from './employee.service.js';
 import { saveChat } from './chat.service.js';
 import { saveMessage } from './message.service.js';
@@ -87,7 +86,6 @@ export async function syncHistory(sessionKey: string, client: Client) {
   const employee = await getEmployeeSession(sessionKey);
   if (!employee) return;
 
-  const io = getSocketServer();
   const chats = await client.getChats();
   const totalChatsReturnedByWhatsApp = chats.length;
   const orderedChats = [...chats].sort((a, b) => (b.timestamp ?? 0) - (a.timestamp ?? 0)).slice(0, 200);
@@ -109,7 +107,7 @@ export async function syncHistory(sessionKey: string, client: Client) {
     const savedChat = await normalizeChat(chat, employee.id, lastPreview, lastAt);
     syncedChats += 1;
 
-    io.emit(socketEvents.chatUpdated, {
+    emitRealtimeEvent('chatUpdated', {
       employeeId: employee.id,
       chat: savedChat
     });
@@ -149,7 +147,7 @@ export async function syncHistory(sessionKey: string, client: Client) {
           }
         });
         syncedMessages += 1;
-        io.emit(socketEvents.messageReceived, {
+        emitRealtimeEvent('messageReceived', {
           employeeId: employee.id,
           chatId: savedChat.id,
           message: savedMessage
@@ -177,7 +175,7 @@ export async function syncHistory(sessionKey: string, client: Client) {
     }
   });
 
-  io.emit(socketEvents.historySynced, {
+  emitRealtimeEvent('historySynced', {
     employeeId: employee.id,
     sessionKey,
     chatCount: syncedChats,

@@ -1,13 +1,13 @@
 import QRCode from 'qrcode';
 import { randomUUID } from 'node:crypto';
-import { rm } from 'node:fs/promises';
+import { access, rm } from 'node:fs/promises';
 import path from 'node:path';
 import type { Client, Chat, Message as WAMessage } from 'whatsapp-web.js';
-import { socketEvents } from '../socket/events.js';
-import { getSocketServer } from '../socket/index.js';
+import { emitRealtimeEvent } from '../socket/broadcast.js';
 import { createEmployeeSession, getEmployeeSession, updateEmployeeSession } from '../services/employee.service.js';
 import { saveChat } from '../services/chat.service.js';
 import { saveMessage } from '../services/message.service.js';
+import { setChatUnreadCount } from '../services/chat.service.js';
 import { syncHistory } from '../services/sync.service.js';
 import { normalizeMessageKind } from '../utils/normalize.js';
 import { logger } from '../utils/logger.js';
@@ -31,6 +31,7 @@ type WhatsAppChatLike = Chat & {
 type ManagedClient = {
   client: Client;
   manualDisconnect: boolean;
+  sawQr: boolean;
   reconnectTimer?: NodeJS.Timeout;
 };
 
@@ -43,6 +44,15 @@ function getLocalAuthSessionDir(sessionKey: string) {
 async function removeLocalAuthSession(sessionKey: string) {
   const sessionDir = getLocalAuthSessionDir(sessionKey);
   await rm(sessionDir, { recursive: true, force: true, maxRetries: 4 });
+}
+
+async function hasLocalAuthSession(sessionKey: string) {
+  try {
+    await access(getLocalAuthSessionDir(sessionKey));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function getBody(message: WAMessage) {
@@ -73,18 +83,41 @@ async function emitQr(sessionKey: string, qr: string) {
     last_error: null
   });
 
-  getSocketServer().emit(socketEvents.qrGenerated, {
+  logger.info('QR_GENERATED', {
+    sessionKey,
+    employeeId: employee?.id ?? null
+  });
+
+  logger.info('QR_STORED', {
+    sessionKey,
+    employeeId: employee?.id ?? null
+  });
+
+  emitRealtimeEvent('qrGenerated', {
     sessionKey,
     employeeId: employee?.id ?? null,
     qr,
     qrDataUrl,
     generatedAt: new Date().toISOString()
   });
+
+  logger.info('QR_EMITTED', {
+    sessionKey,
+    employeeId: employee?.id ?? null
+  });
 }
 
 async function handleReady(sessionKey: string, client: Client) {
   const employee = await getEmployeeSession(sessionKey);
   if (!employee) return;
+  const managed = clients.get(sessionKey);
+  if (managed && !managed.sawQr) {
+    logger.info('QR_EXPIRED', {
+      sessionKey,
+      employeeId: employee.id,
+      reason: 'session_restored_without_qr'
+    });
+  }
 
   const wid = client.info?.wid?._serialized ?? null;
   const phone = client.info?.wid?.user ?? null;
@@ -105,14 +138,20 @@ async function handleReady(sessionKey: string, client: Client) {
     last_error: null
   });
 
-  getSocketServer().emit(socketEvents.employeeConnected, {
+  logger.info('PRESENCE_UPDATED', {
+    sessionKey,
+    employeeId: employee.id,
+    presence: 'online'
+  });
+
+  emitRealtimeEvent('employeeConnected', {
     employee: await getEmployeeSession(sessionKey)
   });
 
   await syncHistory(sessionKey, client);
 }
 
-async function handleMessage(sessionKey: string, message: WAMessage) {
+async function handleMessageCreate(sessionKey: string, message: WAMessage) {
   const employee = await getEmployeeSession(sessionKey);
   if (!employee) return;
   const chat = await message.getChat();
@@ -161,21 +200,102 @@ async function handleMessage(sessionKey: string, message: WAMessage) {
     }
   });
 
+  await setChatUnreadCount(savedChat.id, chatLike.unreadCount ?? 0, getBody(message), new Date(message.timestamp * 1000).toISOString());
+
   await updateEmployeeSession(sessionKey, {
     last_seen_at: new Date().toISOString(),
     status: 'connected',
     session_status: 'connected'
   });
 
-  const io = getSocketServer();
-  io.emit(socketEvents.chatUpdated, {
+  logger.info('MESSAGE_RECEIVED', {
+    sessionKey,
+    employeeId: employee.id,
+    chatId: savedChat.id,
+    messageId: message.id._serialized,
+    direction: message.fromMe ? 'outbound' : 'inbound'
+  });
+
+  logger.info('MESSAGE_STORED', {
+    sessionKey,
+    employeeId: employee.id,
+    chatId: savedChat.id,
+    messageId: message.id._serialized
+  });
+
+  emitRealtimeEvent('chatUpdated', {
     employeeId: employee.id,
     chat: savedChat
   });
-  io.emit(socketEvents.messageReceived, {
+
+  emitRealtimeEvent('messageReceived', {
     employeeId: employee.id,
     chatId: savedChat.id,
     message: savedMessage
+  });
+
+  logger.info('MESSAGE_EMITTED', {
+    sessionKey,
+    employeeId: employee.id,
+    chatId: savedChat.id,
+    messageId: message.id._serialized
+  });
+}
+
+async function handleMessageAck(sessionKey: string, message: WAMessage, ack: number) {
+  const employee = await getEmployeeSession(sessionKey);
+  if (!employee) return;
+
+  const messageTimestamp = new Date(message.timestamp * 1000).toISOString();
+  const deliveredAt = ack >= 2 ? messageTimestamp : null;
+  const readAt = ack >= 3 ? messageTimestamp : null;
+
+  const savedMessage = await saveMessage({
+    employee_id: employee.id,
+    chat_id: (await message.getChat()).id._serialized,
+    external_message_id: message.id._serialized,
+    direction: message.fromMe ? 'outbound' : 'inbound',
+    kind: normalizeMessageKind(message.type),
+    body: getBody(message),
+    caption: (message as WhatsAppMessageLike).caption ?? null,
+    media_url: await buildMediaUrl(message),
+    media_mime_type: message.hasMedia ? ((message as WhatsAppMessageLike)._data?.mimetype ?? null) : null,
+    file_name: (message as WhatsAppMessageLike).filename ?? null,
+    file_size: null,
+    sender_id: message.author ?? message.from ?? null,
+    sender_name: (message as WhatsAppMessageLike).notifyName ?? null,
+    is_from_me: message.fromMe,
+    quoted_message_external_id: message.hasQuotedMsg ? ((message as WhatsAppMessageLike).quotedMsgId?._serialized ?? null) : null,
+    delivered_at: deliveredAt,
+    read_at: readAt,
+    message_timestamp: messageTimestamp,
+    raw_payload: {
+      id: message.id._serialized,
+      type: message.type,
+      fromMe: message.fromMe,
+      hasMedia: message.hasMedia,
+      ack
+    }
+  });
+
+  emitRealtimeEvent('messageReceived', {
+    employeeId: employee.id,
+    chatId: savedMessage.chat_id,
+    message: savedMessage
+  });
+
+  emitRealtimeEvent('messageAck', {
+    employeeId: employee.id,
+    chatId: savedMessage.chat_id,
+    ack,
+    message: savedMessage
+  });
+
+  logger.info('MESSAGE_ACK', {
+    sessionKey,
+    employeeId: employee.id,
+    messageId: message.id._serialized,
+    ack
   });
 }
 
@@ -191,7 +311,21 @@ async function handleDisconnected(sessionKey: string, reason: string) {
     last_error: reason
   });
 
-  getSocketServer().emit(socketEvents.employeeDisconnected, {
+  logger.info('PRESENCE_UPDATED', {
+    sessionKey,
+    employeeId: employee.id,
+    presence: 'offline'
+  });
+
+  if (/qr|qrcode|expired/i.test(reason)) {
+    logger.info('QR_EXPIRED', {
+      sessionKey,
+      employeeId: employee.id,
+      reason
+    });
+  }
+
+  emitRealtimeEvent('employeeDisconnected', {
     employeeId: employee.id,
     sessionKey,
     reason,
@@ -214,13 +348,24 @@ export async function connectEmployee() {
   const employee = await createEmployeeSession(sessionKey);
   const client = createWhatsappClient(sessionKey);
 
-  clients.set(sessionKey, { client, manualDisconnect: false });
+  clients.set(sessionKey, { client, manualDisconnect: false, sawQr: false });
+
+  logger.info('SESSION_INITIALIZED', {
+    sessionKey,
+    authPath: getWhatsAppAuthPath(),
+    authSessionExists: await hasLocalAuthSession(sessionKey)
+  });
 
   client.on('qr', qr => {
+    const managed = clients.get(sessionKey);
+    if (managed) managed.sawQr = true;
     emitQr(sessionKey, qr).catch(error => logger.error('qr event failed', toErrorMessage(error)));
   });
 
   client.on('authenticated', async () => {
+    logger.info('SESSION_AUTHENTICATED', {
+      sessionKey
+    });
     await updateEmployeeSession(sessionKey, {
       status: 'connecting',
       session_status: 'authenticated',
@@ -232,8 +377,12 @@ export async function connectEmployee() {
     handleReady(sessionKey, client).catch(error => logger.error('ready handler failed', toErrorMessage(error)));
   });
 
-  client.on('message', message => {
-    handleMessage(sessionKey, message).catch(error => logger.error('message handler failed', toErrorMessage(error)));
+  client.on('message_create', message => {
+    handleMessageCreate(sessionKey, message).catch(error => logger.error('message_create handler failed', toErrorMessage(error)));
+  });
+
+  client.on('message_ack', (message, ack) => {
+    handleMessageAck(sessionKey, message, ack).catch(error => logger.error('message_ack handler failed', toErrorMessage(error)));
   });
 
   client.on('disconnected', reason => {
@@ -241,6 +390,12 @@ export async function connectEmployee() {
   });
 
   client.on('auth_failure', reason => {
+    if (/qr|qrcode|expired/i.test(reason)) {
+      logger.info('QR_EXPIRED', {
+        sessionKey,
+        reason
+      });
+    }
     updateEmployeeSession(sessionKey, {
       status: 'error',
       session_status: 'error',
@@ -301,7 +456,7 @@ export async function disconnectEmployee(sessionKey: string) {
       presence: 'offline',
       disconnected_at: new Date().toISOString()
     });
-    getSocketServer().emit(socketEvents.employeeDisconnected, {
+    emitRealtimeEvent('employeeDisconnected', {
       employeeId: employee.id,
       sessionKey,
       reason: 'manual_disconnect',

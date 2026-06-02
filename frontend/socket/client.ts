@@ -13,8 +13,9 @@ let socket: Socket | null = null;
 export function getSocket() {
   if (!socket) {
     socket = io(getSocketUrl(), {
-      transports: ['websocket'],
-      autoConnect: true
+      transports: ['polling', 'websocket'],
+      autoConnect: true,
+      withCredentials: true
     });
   }
   return socket;
