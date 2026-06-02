@@ -51,6 +51,48 @@ export async function listEmployees() {
   return (data ?? []) as EmployeeRow[];
 }
 
+export async function markAllEmployeesDisconnected() {
+  const employees = await listEmployees();
+  const disconnectedAt = new Date().toISOString();
+  const updatedEmployees: EmployeeRow[] = [];
+
+  for (const employee of employees) {
+    const { data, error } = await supabase
+      .from('employees')
+      .update({
+        status: 'disconnected',
+        session_status: 'disconnected',
+        presence: 'offline',
+        qr_payload: null,
+        qr_generated_at: null,
+        disconnected_at: disconnectedAt,
+        last_error: null
+      })
+      .eq('session_key', employee.session_key)
+      .select('*')
+      .single<EmployeeRow>();
+
+    if (error) throw error;
+    updatedEmployees.push(data);
+  }
+
+  return updatedEmployees;
+}
+
+async function countTableRows(table: 'chats' | 'messages') {
+  const { count, error } = await supabase.from(table).select('id', { count: 'exact', head: true });
+  if (error) throw error;
+  return count ?? 0;
+}
+
+export async function countChats() {
+  return countTableRows('chats');
+}
+
+export async function countMessages() {
+  return countTableRows('messages');
+}
+
 export async function getEmployeeById(employeeId: string) {
   const { data, error } = await supabase
     .from('employees')

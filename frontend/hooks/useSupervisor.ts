@@ -74,6 +74,36 @@ export function useSupervisor() {
     await api.employees.disconnect(sessionKey);
   }
 
+  async function resyncEmployee(employee: Employee) {
+    setSelectedSessionKey(employee.session_key);
+    setConnectSessionKey(employee.session_key);
+    setConnectEmployeeName(employee.display_name);
+    setConnectQrDataUrl(null);
+
+    try {
+      const response = await api.employees.resync(employee.session_key);
+      setEmployees(current =>
+        [response.employee, ...current.filter(item => item.id !== response.employee.id)].sort(
+          (a, b) => b.updated_at.localeCompare(a.updated_at)
+        )
+      );
+      if (response.requiresQr) {
+        setConnectModalOpen(true);
+      } else {
+        setConnectModalOpen(false);
+        setConnectSessionKey(null);
+        setConnectEmployeeName(null);
+        setConnectQrDataUrl(null);
+      }
+    } catch (error) {
+      setConnectModalOpen(false);
+      setConnectSessionKey(null);
+      setConnectEmployeeName(null);
+      setConnectQrDataUrl(null);
+      throw error;
+    }
+  }
+
   function requestDeleteEmployee(employee: Employee | null) {
     setDeleteTarget(employee);
   }
@@ -261,6 +291,7 @@ export function useSupervisor() {
     selectEmployee,
     selectChat,
     connectEmployee,
+    resyncEmployee,
     disconnectEmployee,
     connectModalOpen,
     connectSessionKey,

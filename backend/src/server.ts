@@ -2,6 +2,7 @@ import 'dotenv/config';
 import http from 'node:http';
 import { createApp } from './app.js';
 import { initializeSocket } from './socket/index.js';
+import { disconnectAllEmployees, getEmployees, getHistoricalDataStats } from './services/employee.service.js';
 import { getClientOrigins, inspectWhatsAppAuthStorage, isPersistentWhatsAppAuthPath, getWhatsAppAuthPath } from './utils/env.js';
 import { logger } from './utils/logger.js';
 
@@ -33,6 +34,23 @@ if (process.env.NODE_ENV === 'production' && !isPersistentWhatsAppAuthPath(authS
     message: 'Production is running without a persistent WhatsApp auth path. QR will be required again after redeploy, restart, or sleep/wake.'
   });
 }
+
+const employees = await getEmployees();
+logger.info('EMPLOYEES_LOADED', {
+  count: employees.length
+});
+
+const disconnectedEmployees = await disconnectAllEmployees();
+logger.info('EMPLOYEES_MARKED_DISCONNECTED', {
+  count: disconnectedEmployees.length
+});
+
+const historicalData = await getHistoricalDataStats();
+logger.info('HISTORICAL_DATA_AVAILABLE', {
+  available: historicalData.available,
+  chatCount: historicalData.chatCount,
+  messageCount: historicalData.messageCount
+});
 
 server.listen(port, () => {
   logger.info(`Backend listening on port ${port}`);

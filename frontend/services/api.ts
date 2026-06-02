@@ -32,6 +32,11 @@ export const api = {
       request<{ employee: EmployeesResponse['employees'][number]; sessionKey: string }>('/employees/connect', { method: 'POST', body: '{}' }),
     disconnect: (sessionKey: string): Promise<{ success: boolean }> =>
       request<{ success: boolean }>('/employees/disconnect', { method: 'POST', body: JSON.stringify({ sessionKey }) }),
+    resync: (sessionKey: string): Promise<{ success: boolean; started: boolean; requiresQr: boolean; employee: EmployeesResponse['employees'][number]; sessionKey: string }> =>
+      request<{ success: boolean; started: boolean; requiresQr: boolean; employee: EmployeesResponse['employees'][number]; sessionKey: string }>(
+        `/employees/${encodeURIComponent(sessionKey)}/resync`,
+        { method: 'POST' }
+      ),
     delete: (sessionKey: string): Promise<{ success: boolean }> =>
       request<{ success: boolean }>(`/employees/${encodeURIComponent(sessionKey)}`, { method: 'DELETE' })
   },

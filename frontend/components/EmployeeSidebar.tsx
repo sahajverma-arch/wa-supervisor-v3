@@ -8,6 +8,7 @@ type Props = {
   selectedSessionKey: string | null;
   onSelect: (employee: Employee) => void;
   onConnect: () => void;
+  onResync: (employee: Employee) => void;
   onDelete: (employee: Employee) => void;
 };
 
@@ -31,7 +32,7 @@ function handleEnterSpace(event: KeyboardEvent<HTMLDivElement>, action: () => vo
   }
 }
 
-export function EmployeeSidebar({ employees, selectedSessionKey, onSelect, onConnect, onDelete }: Props) {
+export function EmployeeSidebar({ employees, selectedSessionKey, onSelect, onConnect, onResync, onDelete }: Props) {
   return (
     <aside className="flex h-full w-full flex-col border-r border-white/10 bg-[#0f1713]/95 p-3">
       <button
@@ -58,6 +59,18 @@ export function EmployeeSidebar({ employees, selectedSessionKey, onSelect, onCon
                 selected ? 'border-[#25D366]/60 bg-white/7' : 'border-white/8 bg-white/[0.03] hover:bg-white/[0.06]'
               ].join(' ')}
             >
+              <button
+                type="button"
+                onClick={event => {
+                  event.stopPropagation();
+                  onResync(employee);
+                }}
+                className="absolute left-2 top-2 rounded-full border border-white/10 bg-black/30 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-ink-200 transition hover:bg-white/10 hover:text-white"
+                title="Refetch recent chats and messages"
+              >
+                Resync
+              </button>
+
               <button
                 type="button"
                 onClick={event => {
@@ -89,10 +102,15 @@ export function EmployeeSidebar({ employees, selectedSessionKey, onSelect, onCon
                 <div className="mt-1 flex items-center gap-2 text-xs text-ink-400">
                   <span className="capitalize">{employee.status}</span>
                   <span className="opacity-50" aria-hidden="true">
-                    •
+                    |
                   </span>
                   <span className="capitalize">{employee.presence}</span>
                 </div>
+                {employee.session_status !== 'connected' ? (
+                  <div className="mt-2 inline-flex rounded-full border border-amber-400/30 bg-amber-400/10 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-200">
+                    Reconnect Required
+                  </div>
+                ) : null}
               </div>
             </div>
           );

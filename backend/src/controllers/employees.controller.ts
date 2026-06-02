@@ -25,6 +25,21 @@ export async function disconnectEmployeeHandler(req: Request, res: Response) {
   res.json({ success: true });
 }
 
+export async function resyncEmployeeHandler(req: Request, res: Response) {
+  const sessionKey = String(req.params.sessionKey ?? '');
+  if (!sessionKey) {
+    return res.status(400).json({ error: 'sessionKey is required' });
+  }
+
+  const employee = await getEmployeeSession(sessionKey);
+  if (!employee) {
+    return res.status(404).json({ error: 'Employee not found' });
+  }
+
+  const started = await whatsappService.resyncEmployee(sessionKey);
+  res.json({ success: true, started, requiresQr: started, employee, sessionKey });
+}
+
 export async function deleteEmployeeHandler(req: Request, res: Response) {
   const sessionKey = String(req.params.sessionKey ?? '');
   if (!sessionKey) {

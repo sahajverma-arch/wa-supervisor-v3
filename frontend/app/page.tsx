@@ -19,6 +19,7 @@ export default function Page() {
             selectedSessionKey={supervisor.selectedSessionKey}
             onSelect={supervisor.selectEmployee}
             onConnect={supervisor.connectEmployee}
+            onResync={supervisor.resyncEmployee}
             onDelete={supervisor.requestDeleteEmployee}
           />
         </div>

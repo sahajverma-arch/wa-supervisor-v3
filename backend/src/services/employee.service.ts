@@ -1,4 +1,12 @@
-import { getEmployeeBySessionKey, insertEmployee, listEmployees, updateEmployeeBySessionKey } from '../supabase/queries.js';
+import {
+  countChats,
+  countMessages,
+  getEmployeeBySessionKey,
+  insertEmployee,
+  listEmployees,
+  markAllEmployeesDisconnected,
+  updateEmployeeBySessionKey
+} from '../supabase/queries.js';
 import type { EmployeeRow } from '../types.js';
 
 export async function createEmployeeSession(sessionKey: string) {
@@ -15,4 +23,17 @@ export async function updateEmployeeSession(sessionKey: string, patch: Partial<E
 
 export async function getEmployees() {
   return listEmployees();
+}
+
+export async function disconnectAllEmployees() {
+  return markAllEmployeesDisconnected();
+}
+
+export async function getHistoricalDataStats() {
+  const [chatCount, messageCount] = await Promise.all([countChats(), countMessages()]);
+  return {
+    chatCount,
+    messageCount,
+    available: chatCount > 0 || messageCount > 0
+  };
 }

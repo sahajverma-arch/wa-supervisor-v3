@@ -72,6 +72,72 @@ async function buildMediaUrl(message: WAMessage) {
   }
 }
 
+function registerClientListeners(sessionKey: string, client: Client) {
+  client.on('qr', qr => {
+    const managed = clients.get(sessionKey);
+    if (managed) managed.sawQr = true;
+    emitQr(sessionKey, qr).catch(error => logger.error('qr event failed', toErrorMessage(error)));
+  });
+
+  client.on('authenticated', async () => {
+    logger.info('SESSION_AUTHENTICATED', {
+      sessionKey
+    });
+    await updateEmployeeSession(sessionKey, {
+      status: 'connecting',
+      session_status: 'authenticated',
+      last_error: null
+    });
+  });
+
+  client.on('ready', () => {
+    handleReady(sessionKey, client).catch(error => logger.error('ready handler failed', toErrorMessage(error)));
+  });
+
+  client.on('message_create', message => {
+    handleMessageCreate(sessionKey, message).catch(error => logger.error('message_create handler failed', toErrorMessage(error)));
+  });
+
+  client.on('message_ack', (message, ack) => {
+    handleMessageAck(sessionKey, message, ack).catch(error => logger.error('message_ack handler failed', toErrorMessage(error)));
+  });
+
+  client.on('disconnected', reason => {
+    handleDisconnected(sessionKey, reason).catch(error => logger.error('disconnect handler failed', toErrorMessage(error)));
+  });
+
+  client.on('auth_failure', reason => {
+    if (/qr|qrcode|expired/i.test(reason)) {
+      logger.info('QR_EXPIRED', {
+        sessionKey,
+        reason
+      });
+    }
+    updateEmployeeSession(sessionKey, {
+      status: 'error',
+      session_status: 'error',
+      last_error: reason
+    }).catch(error => logger.error('auth failure update failed', toErrorMessage(error)));
+  });
+}
+
+function startManagedClient(sessionKey: string, client: Client) {
+  clients.set(sessionKey, { client, manualDisconnect: false, sawQr: false });
+  registerClientListeners(sessionKey, client);
+
+  setImmediate(() => {
+    void client.initialize().catch(error => {
+      const message = toErrorMessage(error);
+      logger.error(`initialize failed for ${sessionKey}`, message);
+      updateEmployeeSession(sessionKey, {
+        status: 'error',
+        session_status: 'error',
+        last_error: message
+      }).catch(updateError => logger.error('failed to persist initialize error', toErrorMessage(updateError)));
+    });
+  });
+}
+
 async function emitQr(sessionKey: string, qr: string) {
   const employee = await getEmployeeSession(sessionKey);
   const qrDataUrl = await QRCode.toDataURL(qr, { errorCorrectionLevel: 'M', margin: 1, scale: 8 });
@@ -348,74 +414,34 @@ export async function connectEmployee() {
   const employee = await createEmployeeSession(sessionKey);
   const client = createWhatsappClient(sessionKey);
 
-  clients.set(sessionKey, { client, manualDisconnect: false, sawQr: false });
-
   logger.info('SESSION_INITIALIZED', {
     sessionKey,
     authPath: getWhatsAppAuthPath(),
     authSessionExists: await hasLocalAuthSession(sessionKey)
   });
-
-  client.on('qr', qr => {
-    const managed = clients.get(sessionKey);
-    if (managed) managed.sawQr = true;
-    emitQr(sessionKey, qr).catch(error => logger.error('qr event failed', toErrorMessage(error)));
-  });
-
-  client.on('authenticated', async () => {
-    logger.info('SESSION_AUTHENTICATED', {
-      sessionKey
-    });
-    await updateEmployeeSession(sessionKey, {
-      status: 'connecting',
-      session_status: 'authenticated',
-      last_error: null
-    });
-  });
-
-  client.on('ready', () => {
-    handleReady(sessionKey, client).catch(error => logger.error('ready handler failed', toErrorMessage(error)));
-  });
-
-  client.on('message_create', message => {
-    handleMessageCreate(sessionKey, message).catch(error => logger.error('message_create handler failed', toErrorMessage(error)));
-  });
-
-  client.on('message_ack', (message, ack) => {
-    handleMessageAck(sessionKey, message, ack).catch(error => logger.error('message_ack handler failed', toErrorMessage(error)));
-  });
-
-  client.on('disconnected', reason => {
-    handleDisconnected(sessionKey, reason).catch(error => logger.error('disconnect handler failed', toErrorMessage(error)));
-  });
-
-  client.on('auth_failure', reason => {
-    if (/qr|qrcode|expired/i.test(reason)) {
-      logger.info('QR_EXPIRED', {
-        sessionKey,
-        reason
-      });
-    }
-    updateEmployeeSession(sessionKey, {
-      status: 'error',
-      session_status: 'error',
-      last_error: reason
-    }).catch(error => logger.error('auth failure update failed', toErrorMessage(error)));
-  });
-
-  setImmediate(() => {
-    void client.initialize().catch(error => {
-      const message = toErrorMessage(error);
-      logger.error(`initialize failed for ${sessionKey}`, message);
-      updateEmployeeSession(sessionKey, {
-        status: 'error',
-        session_status: 'error',
-        last_error: message
-      }).catch(updateError => logger.error('failed to persist initialize error', toErrorMessage(updateError)));
-    });
-  });
+  startManagedClient(sessionKey, client);
 
   return { employee, sessionKey };
+}
+
+export async function resyncEmployee(sessionKey: string) {
+  const employee = await getEmployeeSession(sessionKey);
+  if (!employee) return false;
+
+  const managed = clients.get(sessionKey);
+  if (managed) {
+    await syncHistory(sessionKey, managed.client);
+    return true;
+  }
+
+  const client = createWhatsappClient(sessionKey);
+  logger.info('SESSION_INITIALIZED', {
+    sessionKey,
+    authPath: getWhatsAppAuthPath(),
+    authSessionExists: await hasLocalAuthSession(sessionKey)
+  });
+  startManagedClient(sessionKey, client);
+  return true;
 }
 
 export async function disconnectEmployee(sessionKey: string) {

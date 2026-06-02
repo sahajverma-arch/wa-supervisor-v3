@@ -34,6 +34,11 @@ export function ConversationPane({ employee, chat, messages }: Props) {
             <div className="text-xs text-ink-400">{employee.session_status === 'connected' ? 'Live and synced' : employee.session_status}</div>
           </div>
         </div>
+        {employee.session_status !== 'connected' ? (
+          <div className="rounded-full border border-amber-400/30 bg-amber-400/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-amber-200">
+            Reconnect Required
+          </div>
+        ) : null}
         <div className="text-xs uppercase tracking-[0.3em] text-ink-500">Read only</div>
       </header>
 
