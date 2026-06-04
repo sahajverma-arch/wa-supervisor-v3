@@ -3,12 +3,12 @@ import http from 'node:http';
 import { createApp } from './app.js';
 import { initializeSocket } from './socket/index.js';
 import { disconnectAllEmployees, getEmployees, getHistoricalDataStats } from './services/employee.service.js';
-import { getClientOrigins, inspectWhatsAppAuthStorage, isPersistentWhatsAppAuthPath, getWhatsAppAuthPath } from './utils/env.js';
+import { getClientOrigins, inspectWhatsAppAuthStorage, resolveWhatsAppAuthPath } from './utils/env.js';
 import { logger } from './utils/logger.js';
 
 const port = Number(process.env.PORT ?? 4000);
 const clientOrigins = getClientOrigins();
-const authPath = getWhatsAppAuthPath();
+const authPath = await resolveWhatsAppAuthPath();
 
 const app = createApp();
 const server = http.createServer(app);
@@ -27,13 +27,6 @@ logger.info('SESSION_COUNT', {
   authPath: authStorage.authPath,
   sessionCount: authStorage.sessionCount
 });
-
-if (process.env.NODE_ENV === 'production' && !isPersistentWhatsAppAuthPath(authStorage.authPath)) {
-  logger.warn('WHATSAPP_AUTH_PATH_EPHEMERAL', {
-    authPath: authStorage.authPath,
-    message: 'Production is running without a persistent WhatsApp auth path. QR will be required again after redeploy, restart, or sleep/wake.'
-  });
-}
 
 const employees = await getEmployees();
 logger.info('EMPLOYEES_LOADED', {

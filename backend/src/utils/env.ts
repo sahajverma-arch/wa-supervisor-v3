@@ -1,4 +1,6 @@
-import { access, readdir } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { access, mkdir, readdir } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 
 function splitOrigins(value: string | undefined) {
@@ -19,17 +21,45 @@ export function getClientOrigins() {
   throw new Error('CLIENT_URL or CLIENT_URLS is required');
 }
 
-export function getWhatsAppAuthPath() {
-  return process.env.WHATSAPP_AUTH_PATH?.trim() || path.resolve(process.cwd(), '.wwebjs_auth');
+function getWhatsAppAuthPathCandidates() {
+  const envPath = process.env.WHATSAPP_AUTH_PATH?.trim();
+  const cwdPath = path.resolve(process.cwd(), '.wwebjs_auth');
+  const tmpPath = path.join(os.tmpdir(), 'wa-supervisor-v3', '.wwebjs_auth');
+
+  return [envPath, cwdPath, tmpPath].filter((candidate): candidate is string => Boolean(candidate));
 }
 
-export function isPersistentWhatsAppAuthPath(authPath = getWhatsAppAuthPath()) {
+async function ensureWritableDirectory(authPath: string) {
   const normalized = path.resolve(authPath);
-  return normalized.startsWith(path.resolve('/var/data'));
+  await mkdir(normalized, { recursive: true });
+  await access(normalized, constants.W_OK);
+  return normalized;
 }
 
-export async function inspectWhatsAppAuthStorage(authPath = getWhatsAppAuthPath()) {
-  const normalized = path.resolve(authPath);
+let resolvedWhatsAppAuthPathPromise: Promise<string> | undefined;
+
+export function resolveWhatsAppAuthPath() {
+  if (!resolvedWhatsAppAuthPathPromise) {
+    resolvedWhatsAppAuthPathPromise = (async () => {
+      const errors: string[] = [];
+
+      for (const candidate of getWhatsAppAuthPathCandidates()) {
+        try {
+          return await ensureWritableDirectory(candidate);
+        } catch (error) {
+          errors.push(`${path.resolve(candidate)}: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+
+      throw new Error(`Unable to create a writable WhatsApp auth directory. Tried: ${errors.join(' | ')}`);
+    })();
+  }
+
+  return resolvedWhatsAppAuthPathPromise;
+}
+
+export async function inspectWhatsAppAuthStorage(authPath?: string) {
+  const normalized = path.resolve(authPath ?? (await resolveWhatsAppAuthPath()));
   let exists = false;
   let sessionCount = 0;
 
@@ -47,7 +77,6 @@ export async function inspectWhatsAppAuthStorage(authPath = getWhatsAppAuthPath(
   return {
     authPath: normalized,
     exists,
-    sessionCount,
-    persistent: isPersistentWhatsAppAuthPath(normalized)
+    sessionCount
   };
 }

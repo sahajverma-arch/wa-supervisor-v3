@@ -12,7 +12,7 @@ import { syncHistory } from '../services/sync.service.js';
 import { normalizeMessageKind } from '../utils/normalize.js';
 import { logger } from '../utils/logger.js';
 import { toErrorMessage } from '../utils/errors.js';
-import { getWhatsAppAuthPath } from '../utils/env.js';
+import { resolveWhatsAppAuthPath } from '../utils/env.js';
 import { createWhatsappClient } from './clientFactory.js';
 
 type WhatsAppMessageLike = WAMessage & {
@@ -37,18 +37,18 @@ type ManagedClient = {
 
 const clients = new Map<string, ManagedClient>();
 
-function getLocalAuthSessionDir(sessionKey: string) {
-  return path.resolve(getWhatsAppAuthPath(), `session-${sessionKey}`);
+function getLocalAuthSessionDir(sessionKey: string, authPath: string) {
+  return path.resolve(authPath, `session-${sessionKey}`);
 }
 
-async function removeLocalAuthSession(sessionKey: string) {
-  const sessionDir = getLocalAuthSessionDir(sessionKey);
+async function removeLocalAuthSession(sessionKey: string, authPath: string) {
+  const sessionDir = getLocalAuthSessionDir(sessionKey, authPath);
   await rm(sessionDir, { recursive: true, force: true, maxRetries: 4 });
 }
 
-async function hasLocalAuthSession(sessionKey: string) {
+async function hasLocalAuthSession(sessionKey: string, authPath: string) {
   try {
-    await access(getLocalAuthSessionDir(sessionKey));
+    await access(getLocalAuthSessionDir(sessionKey, authPath));
     return true;
   } catch {
     return false;
@@ -70,6 +70,22 @@ async function buildMediaUrl(message: WAMessage) {
   } catch {
     return null;
   }
+}
+
+async function cleanupFailedClient(sessionKey: string, client: Client) {
+  const managed = clients.get(sessionKey);
+  if (managed) {
+    managed.manualDisconnect = true;
+    if (managed.reconnectTimer) clearTimeout(managed.reconnectTimer);
+  }
+
+  try {
+    await client.destroy();
+  } catch (error) {
+    logger.warn(`destroy failed for ${sessionKey}`, toErrorMessage(error));
+  }
+
+  clients.delete(sessionKey);
 }
 
 function registerClientListeners(sessionKey: string, client: Client) {
@@ -126,9 +142,10 @@ function startManagedClient(sessionKey: string, client: Client) {
   registerClientListeners(sessionKey, client);
 
   setImmediate(() => {
-    void client.initialize().catch(error => {
+    void client.initialize().catch(async error => {
       const message = toErrorMessage(error);
       logger.error(`initialize failed for ${sessionKey}`, message);
+      await cleanupFailedClient(sessionKey, client);
       updateEmployeeSession(sessionKey, {
         status: 'error',
         session_status: 'error',
@@ -412,12 +429,13 @@ async function handleDisconnected(sessionKey: string, reason: string) {
 export async function connectEmployee() {
   const sessionKey = `session_${randomUUID().replace(/-/g, '').slice(0, 16)}`;
   const employee = await createEmployeeSession(sessionKey);
-  const client = createWhatsappClient(sessionKey);
+  const authPath = await resolveWhatsAppAuthPath();
+  const client = await createWhatsappClient(sessionKey);
 
   logger.info('SESSION_INITIALIZED', {
     sessionKey,
-    authPath: getWhatsAppAuthPath(),
-    authSessionExists: await hasLocalAuthSession(sessionKey)
+    authPath,
+    authSessionExists: await hasLocalAuthSession(sessionKey, authPath)
   });
   startManagedClient(sessionKey, client);
 
@@ -434,11 +452,12 @@ export async function resyncEmployee(sessionKey: string) {
     return true;
   }
 
-  const client = createWhatsappClient(sessionKey);
+  const authPath = await resolveWhatsAppAuthPath();
+  const client = await createWhatsappClient(sessionKey);
   logger.info('SESSION_INITIALIZED', {
     sessionKey,
-    authPath: getWhatsAppAuthPath(),
-    authSessionExists: await hasLocalAuthSession(sessionKey)
+    authPath,
+    authSessionExists: await hasLocalAuthSession(sessionKey, authPath)
   });
   startManagedClient(sessionKey, client);
   return true;
@@ -494,6 +513,7 @@ export async function disconnectEmployee(sessionKey: string) {
 
 export async function deleteEmployeeSession(sessionKey: string) {
   const managed = clients.get(sessionKey);
+  const authPath = await resolveWhatsAppAuthPath();
   if (managed) {
     managed.manualDisconnect = true;
     if (managed.reconnectTimer) clearTimeout(managed.reconnectTimer);
@@ -514,7 +534,7 @@ export async function deleteEmployeeSession(sessionKey: string) {
   }
 
   try {
-    await removeLocalAuthSession(sessionKey);
+    await removeLocalAuthSession(sessionKey, authPath);
   } catch (error) {
     logger.warn(`LocalAuth cleanup failed for ${sessionKey}`, toErrorMessage(error));
   }

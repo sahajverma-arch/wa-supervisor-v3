@@ -31,5 +31,6 @@ Read-only manager console for supervised WhatsApp employee accounts.
 ## Notes
 
 - `whatsapp-web.js` runs only in the backend.
+- WhatsApp auth storage is resolved at runtime to a writable local directory. A persistent disk is optional, not required.
 - Session state is stored directly on the `employees` table.
 - Initial history sync backfills 25 chats and 50 messages per chat.
