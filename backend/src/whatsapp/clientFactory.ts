@@ -5,7 +5,9 @@ import {
   applyPuppeteerCacheDirectory,
   formatPuppeteerMissingChromeMessage,
   ensurePuppeteerBrowserAvailable,
-  inspectPuppeteerBrowserDiagnostics
+  inspectPuppeteerBrowserDiagnostics,
+  installPuppeteerRuntimeInstrumentation,
+  withPuppeteerSessionContext
 } from '../utils/puppeteerEnv.js';
 
 const require = createRequire(import.meta.url);
@@ -24,6 +26,7 @@ class PuppeteerChromeUnavailableError extends Error {
 
 export async function createWhatsappClient(sessionKey: string) {
   applyPuppeteerCacheDirectory();
+  installPuppeteerRuntimeInstrumentation();
   const authPath = await resolveWhatsAppAuthPath();
   const diagnostics = await ensurePuppeteerBrowserAvailable();
 
@@ -31,14 +34,38 @@ export async function createWhatsappClient(sessionKey: string) {
     throw new PuppeteerChromeUnavailableError(formatPuppeteerMissingChromeMessage(diagnostics), diagnostics, diagnostics.error);
   }
 
-  return new Client({
+  const client = new Client({
     authStrategy: new LocalAuth({
       clientId: sessionKey,
       dataPath: authPath
     }),
     puppeteer: {
       headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox']
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--no-zygote',
+        '--disable-gpu',
+        '--disable-extensions',
+        '--disable-background-networking',
+        '--disable-default-apps',
+        '--disable-sync',
+        '--mute-audio',
+        '--no-first-run'
+      ]
     }
   });
+
+  const originalInitialize = client.initialize.bind(client);
+  client.initialize = async () =>
+    withPuppeteerSessionContext(
+      {
+        sessionKey,
+        authPath
+      },
+      () => originalInitialize()
+    );
+
+  return client;
 }
