@@ -32,5 +32,6 @@ Read-only manager console for supervised WhatsApp employee accounts.
 
 - `whatsapp-web.js` runs only in the backend.
 - WhatsApp auth storage is resolved at runtime to a writable local directory. A persistent disk is optional, not required.
+- The backend build installs Puppeteer-managed Chrome so WhatsApp can launch on Render without a preinstalled system browser.
 - Session state is stored directly on the `employees` table.
 - Initial history sync backfills 25 chats and 50 messages per chat.
