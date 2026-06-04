@@ -32,6 +32,7 @@ type ManagedClient = {
   client: Client;
   manualDisconnect: boolean;
   sawQr: boolean;
+  ready: boolean;
   reconnectTimer?: NodeJS.Timeout;
 };
 
@@ -86,6 +87,22 @@ async function cleanupFailedClient(sessionKey: string, client: Client) {
   }
 
   clients.delete(sessionKey);
+}
+
+async function logoutIfReady(sessionKey: string, managed: ManagedClient) {
+  if (!managed.ready) {
+    logger.info('SKIPPING_LOGOUT_BEFORE_READY', {
+      sessionKey,
+      reason: 'client_not_ready'
+    });
+    return;
+  }
+
+  try {
+    await managed.client.logout();
+  } catch (error) {
+    logger.warn(`logout failed for ${sessionKey}`, toErrorMessage(error));
+  }
 }
 
 function logLifecycleEvent(eventName: string, sessionKey: string, payload: unknown) {
@@ -146,6 +163,8 @@ function registerClientListeners(sessionKey: string, client: Client) {
   client.on('ready', async (payload: unknown) => {
     logLifecycleEvent('ready', sessionKey, { payload });
     try {
+      const managed = clients.get(sessionKey);
+      if (managed) managed.ready = true;
       await handleReady(sessionKey, client);
     } catch (error) {
       logLifecycleError('ready', sessionKey, error);
@@ -224,7 +243,7 @@ function registerClientListeners(sessionKey: string, client: Client) {
 }
 
 function startManagedClient(sessionKey: string, client: Client) {
-  clients.set(sessionKey, { client, manualDisconnect: false, sawQr: false });
+  clients.set(sessionKey, { client, manualDisconnect: false, sawQr: false, ready: false });
   registerClientListeners(sessionKey, client);
 
   setImmediate(() => {
@@ -587,11 +606,7 @@ export async function disconnectEmployee(sessionKey: string) {
   managed.manualDisconnect = true;
   if (managed.reconnectTimer) clearTimeout(managed.reconnectTimer);
 
-  try {
-    await managed.client.logout();
-  } catch (error) {
-    logger.warn(`logout failed for ${sessionKey}`, toErrorMessage(error));
-  }
+  await logoutIfReady(sessionKey, managed);
 
   try {
     await managed.client.destroy();
@@ -625,11 +640,7 @@ export async function deleteEmployeeSession(sessionKey: string) {
     managed.manualDisconnect = true;
     if (managed.reconnectTimer) clearTimeout(managed.reconnectTimer);
 
-    try {
-      await managed.client.logout();
-    } catch (error) {
-      logger.warn(`logout failed for ${sessionKey}`, toErrorMessage(error));
-    }
+    await logoutIfReady(sessionKey, managed);
 
     try {
       await managed.client.destroy();
