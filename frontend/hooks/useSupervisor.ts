@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../services/api';
 import { getSocket } from '../socket/client';
 import type {
@@ -29,6 +29,12 @@ export function useSupervisor() {
   const [connectQrDataUrl, setConnectQrDataUrl] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Employee | null>(null);
   const [loading, setLoading] = useState(true);
+  const connectSessionKeyRef = useRef<string | null>(null);
+
+  function updateConnectSessionKey(value: string | null) {
+    connectSessionKeyRef.current = value;
+    setConnectSessionKey(value);
+  }
 
   const selectedEmployee = useMemo(
     () => employees.find(employee => employee.session_key === selectedSessionKey) ?? null,
@@ -64,7 +70,7 @@ export function useSupervisor() {
     setSelectedChatId(null);
     setChats([]);
     setMessages([]);
-    setConnectSessionKey(response.sessionKey);
+    updateConnectSessionKey(response.sessionKey);
     setConnectEmployeeName(response.employee.display_name);
     setConnectQrDataUrl(null);
     setConnectModalOpen(true);
@@ -76,7 +82,7 @@ export function useSupervisor() {
 
   async function resyncEmployee(employee: Employee) {
     setSelectedSessionKey(employee.session_key);
-    setConnectSessionKey(employee.session_key);
+    updateConnectSessionKey(employee.session_key);
     setConnectEmployeeName(employee.display_name);
     setConnectQrDataUrl(null);
 
@@ -91,13 +97,13 @@ export function useSupervisor() {
         setConnectModalOpen(true);
       } else {
         setConnectModalOpen(false);
-        setConnectSessionKey(null);
+        updateConnectSessionKey(null);
         setConnectEmployeeName(null);
         setConnectQrDataUrl(null);
       }
     } catch (error) {
       setConnectModalOpen(false);
-      setConnectSessionKey(null);
+      updateConnectSessionKey(null);
       setConnectEmployeeName(null);
       setConnectQrDataUrl(null);
       throw error;
@@ -148,24 +154,27 @@ export function useSupervisor() {
     const socket = getSocket();
 
     const handleQr = (payload: SocketQrPayload) => {
-      if (payload.sessionKey !== connectSessionKey) return;
+      console.info('[wa-supervisor-v3][frontend] qr_generated event received', payload);
+      if (payload.sessionKey !== connectSessionKeyRef.current) return;
       setConnectModalOpen(true);
       setConnectQrDataUrl(payload.qrDataUrl);
     };
 
     const handleEmployeeConnected = (payload: SocketEmployeeConnectedPayload) => {
+      console.info('[wa-supervisor-v3][frontend] employee_connected event received', payload);
       setEmployees(current =>
         current.map(employee => (employee.id === payload.employee.id ? { ...employee, ...payload.employee } : employee))
       );
-      if (payload.employee.session_key === connectSessionKey) {
+      if (payload.employee.session_key === connectSessionKeyRef.current) {
         setConnectQrDataUrl(null);
         setConnectModalOpen(false);
-        setConnectSessionKey(null);
+        updateConnectSessionKey(null);
         setConnectEmployeeName(null);
       }
     };
 
     const handleEmployeeDisconnected = (payload: SocketEmployeeDisconnectedPayload) => {
+      console.info('[wa-supervisor-v3][frontend] employee_disconnected event received', payload);
       setEmployees(current =>
         current.map(employee =>
           employee.id === payload.employeeId
@@ -176,6 +185,7 @@ export function useSupervisor() {
     };
 
     const handleEmployeeDeleted = (payload: SocketEmployeeDeletedPayload) => {
+      console.info('[wa-supervisor-v3][frontend] employee_deleted event received', payload);
       setEmployees(current => current.filter(employee => employee.id !== payload.employeeId));
       if (selectedEmployee?.id === payload.employeeId || selectedSessionKey === payload.sessionKey) {
         setSelectedSessionKey(null);
@@ -186,6 +196,7 @@ export function useSupervisor() {
     };
 
     const handleChatUpdated = (payload: SocketChatUpdatedPayload) => {
+      console.info('[wa-supervisor-v3][frontend] chat_updated event received', payload);
       if (selectedEmployee?.id !== payload.employeeId) return;
       setChats(current => {
         const next = current.filter(chat => chat.id !== payload.chat.id);
@@ -194,6 +205,7 @@ export function useSupervisor() {
     };
 
     const handleMessageReceived = (payload: SocketMessageReceivedPayload) => {
+      console.info('[wa-supervisor-v3][frontend] message_received event received', payload);
       if (selectedEmployee?.id !== payload.employeeId) return;
       setChats(current =>
         current.map(chat =>
@@ -218,6 +230,7 @@ export function useSupervisor() {
     };
 
     const handleHistorySynced = (_payload: SocketHistorySyncedPayload) => {
+      console.info('[wa-supervisor-v3][frontend] history_synced event received', _payload);
       if (selectedSessionKey) {
         loadChats(selectedSessionKey, chatSearch).catch(() => undefined);
         if (selectedChatId) {
@@ -267,7 +280,7 @@ export function useSupervisor() {
 
   function selectEmployee(employee: Employee) {
     setSelectedSessionKey(employee.session_key);
-    setConnectSessionKey(null);
+    updateConnectSessionKey(null);
     setConnectEmployeeName(null);
     setConnectQrDataUrl(null);
     setConnectModalOpen(false);

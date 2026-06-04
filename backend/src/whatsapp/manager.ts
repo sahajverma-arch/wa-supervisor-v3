@@ -88,52 +88,138 @@ async function cleanupFailedClient(sessionKey: string, client: Client) {
   clients.delete(sessionKey);
 }
 
+function logLifecycleEvent(eventName: string, sessionKey: string, payload: unknown) {
+  logger.info(`WHATSAPP_${eventName.toUpperCase()}`, {
+    sessionKey,
+    payload
+  });
+}
+
+function logLifecycleError(eventName: string, sessionKey: string, error: unknown) {
+  logger.error(`WHATSAPP_${eventName.toUpperCase()}_ERROR`, {
+    sessionKey,
+    error: serializeError(error)
+  });
+}
+
 function registerClientListeners(sessionKey: string, client: Client) {
-  client.on('qr', qr => {
-    const managed = clients.get(sessionKey);
-    if (managed) managed.sawQr = true;
-    emitQr(sessionKey, qr).catch(error => logger.error('qr event failed', toErrorMessage(error)));
-  });
-
-  client.on('authenticated', async () => {
-    logger.info('SESSION_AUTHENTICATED', {
-      sessionKey
-    });
-    await updateEmployeeSession(sessionKey, {
-      status: 'connecting',
-      session_status: 'authenticated',
-      last_error: null
-    });
-  });
-
-  client.on('ready', () => {
-    handleReady(sessionKey, client).catch(error => logger.error('ready handler failed', toErrorMessage(error)));
-  });
-
-  client.on('message_create', message => {
-    handleMessageCreate(sessionKey, message).catch(error => logger.error('message_create handler failed', toErrorMessage(error)));
-  });
-
-  client.on('message_ack', (message, ack) => {
-    handleMessageAck(sessionKey, message, ack).catch(error => logger.error('message_ack handler failed', toErrorMessage(error)));
-  });
-
-  client.on('disconnected', reason => {
-    handleDisconnected(sessionKey, reason).catch(error => logger.error('disconnect handler failed', toErrorMessage(error)));
-  });
-
-  client.on('auth_failure', reason => {
-    if (/qr|qrcode|expired/i.test(reason)) {
-      logger.info('QR_EXPIRED', {
-        sessionKey,
-        reason
-      });
+  client.on('qr', async qr => {
+    logLifecycleEvent('qr', sessionKey, { qr });
+    try {
+      const managed = clients.get(sessionKey);
+      if (managed) managed.sawQr = true;
+      await emitQr(sessionKey, qr);
+    } catch (error) {
+      logLifecycleError('qr', sessionKey, error);
     }
-    updateEmployeeSession(sessionKey, {
-      status: 'error',
-      session_status: 'error',
-      last_error: reason
-    }).catch(error => logger.error('auth failure update failed', toErrorMessage(error)));
+  });
+
+  client.on('authenticated', async (payload: unknown) => {
+    logLifecycleEvent('authenticated', sessionKey, { payload });
+    try {
+      await updateEmployeeSession(sessionKey, {
+        status: 'connecting',
+        session_status: 'authenticated',
+        last_error: null
+      });
+      logger.info('SESSION_AUTHENTICATED', {
+        sessionKey,
+        payload
+      });
+    } catch (error) {
+      logLifecycleError('authenticated', sessionKey, error);
+    }
+  });
+
+  client.on('loading_screen', async (percent: number, message: string) => {
+    logLifecycleEvent('loading_screen', sessionKey, { percent, message });
+    try {
+      await updateEmployeeSession(sessionKey, {
+        status: 'connecting',
+        last_error: null
+      });
+    } catch (error) {
+      logLifecycleError('loading_screen', sessionKey, error);
+    }
+  });
+
+  client.on('ready', async (payload: unknown) => {
+    logLifecycleEvent('ready', sessionKey, { payload });
+    try {
+      await handleReady(sessionKey, client);
+    } catch (error) {
+      logLifecycleError('ready', sessionKey, error);
+    }
+  });
+
+  client.on('change_state', async (state: string) => {
+    logLifecycleEvent('change_state', sessionKey, { state });
+    try {
+      const employee = await getEmployeeSession(sessionKey);
+      if (!employee) return;
+      await updateEmployeeSession(sessionKey, {
+        last_seen_at: new Date().toISOString(),
+        status: state === 'CONFLICT' ? 'error' : 'connecting',
+        last_error: null
+      });
+    } catch (error) {
+      logLifecycleError('change_state', sessionKey, error);
+    }
+  });
+
+  client.on('auth_failure', async payload => {
+    logLifecycleEvent('auth_failure', sessionKey, { payload });
+    try {
+      if (/qr|qrcode|expired/i.test(payload)) {
+        logger.info('QR_EXPIRED', {
+          sessionKey,
+          reason: payload
+        });
+      }
+      await updateEmployeeSession(sessionKey, {
+        status: 'error',
+        session_status: 'error',
+        last_error: payload
+      });
+    } catch (error) {
+      logLifecycleError('auth_failure', sessionKey, error);
+    }
+  });
+
+  client.on('disconnected', async reason => {
+    logLifecycleEvent('disconnected', sessionKey, { reason });
+    try {
+      await handleDisconnected(sessionKey, reason);
+    } catch (error) {
+      logLifecycleError('disconnected', sessionKey, error);
+    }
+  });
+
+  client.on('message_create', async message => {
+    logLifecycleEvent('message_create', sessionKey, {
+      messageId: message.id?._serialized ?? null,
+      fromMe: message.fromMe,
+      type: message.type
+    });
+    try {
+      await handleMessageCreate(sessionKey, message);
+    } catch (error) {
+      logLifecycleError('message_create', sessionKey, error);
+    }
+  });
+
+  client.on('message_ack', async (message, ack) => {
+    logLifecycleEvent('message_ack', sessionKey, {
+      messageId: message.id?._serialized ?? null,
+      fromMe: message.fromMe,
+      type: message.type,
+      ack
+    });
+    try {
+      await handleMessageAck(sessionKey, message, ack);
+    } catch (error) {
+      logLifecycleError('message_ack', sessionKey, error);
+    }
   });
 }
 
