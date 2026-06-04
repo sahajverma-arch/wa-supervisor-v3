@@ -3,10 +3,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/server.ts",
+    "dev": "node init && tsx watch src/server.ts",
     "chrome:install": "node scripts/install-chrome.cjs",
-    "build": "npm run chrome:install && tsc -p tsconfig.json",
-    "start": "node dist/server.js"
+    "build": "node init && npm run chrome:install && tsc -p tsconfig.json",
+    "start": "node init && node dist/server.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.49.1",
