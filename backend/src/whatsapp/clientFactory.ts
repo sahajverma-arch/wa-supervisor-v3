@@ -1,18 +1,35 @@
 import { createRequire } from 'node:module';
-import { access } from 'node:fs/promises';
-import type * as Puppeteer from 'puppeteer';
 import type * as WhatsAppWeb from 'whatsapp-web.js';
 import { resolveWhatsAppAuthPath } from '../utils/env.js';
+import {
+  applyPuppeteerCacheDirectory,
+  formatPuppeteerMissingChromeMessage,
+  ensurePuppeteerBrowserAvailable,
+  inspectPuppeteerBrowserDiagnostics
+} from '../utils/puppeteerEnv.js';
 
 const require = createRequire(import.meta.url);
-const puppeteer = require('puppeteer') as typeof Puppeteer;
 const whatsappWeb = require('whatsapp-web.js') as typeof WhatsAppWeb;
 const { Client, LocalAuth } = whatsappWeb;
 
+class PuppeteerChromeUnavailableError extends Error {
+  diagnostics;
+
+  constructor(message: string, diagnostics: Awaited<ReturnType<typeof inspectPuppeteerBrowserDiagnostics>>, cause?: unknown) {
+    super(message, cause ? { cause } : undefined);
+    this.name = 'PuppeteerChromeUnavailableError';
+    this.diagnostics = diagnostics;
+  }
+}
+
 export async function createWhatsappClient(sessionKey: string) {
+  applyPuppeteerCacheDirectory();
   const authPath = await resolveWhatsAppAuthPath();
-  const executablePath = await puppeteer.executablePath();
-  await access(executablePath);
+  const diagnostics = await ensurePuppeteerBrowserAvailable();
+
+  if (!diagnostics.available) {
+    throw new PuppeteerChromeUnavailableError(formatPuppeteerMissingChromeMessage(diagnostics), diagnostics, diagnostics.error);
+  }
 
   return new Client({
     authStrategy: new LocalAuth({
@@ -21,7 +38,6 @@ export async function createWhatsappClient(sessionKey: string) {
     }),
     puppeteer: {
       headless: true,
-      executablePath,
       args: ['--no-sandbox', '--disable-setuid-sandbox']
     }
   });

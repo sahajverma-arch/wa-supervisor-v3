@@ -11,7 +11,7 @@ import { setChatUnreadCount } from '../services/chat.service.js';
 import { syncHistory } from '../services/sync.service.js';
 import { normalizeMessageKind } from '../utils/normalize.js';
 import { logger } from '../utils/logger.js';
-import { toErrorMessage } from '../utils/errors.js';
+import { serializeError, toErrorMessage } from '../utils/errors.js';
 import { resolveWhatsAppAuthPath } from '../utils/env.js';
 import { createWhatsappClient } from './clientFactory.js';
 
@@ -144,7 +144,7 @@ function startManagedClient(sessionKey: string, client: Client) {
   setImmediate(() => {
     void client.initialize().catch(async error => {
       const message = toErrorMessage(error);
-      logger.error(`initialize failed for ${sessionKey}`, message);
+      logger.error(`initialize failed for ${sessionKey}`, serializeError(error));
       await cleanupFailedClient(sessionKey, client);
       updateEmployeeSession(sessionKey, {
         status: 'error',
@@ -430,16 +430,27 @@ export async function connectEmployee() {
   const sessionKey = `session_${randomUUID().replace(/-/g, '').slice(0, 16)}`;
   const employee = await createEmployeeSession(sessionKey);
   const authPath = await resolveWhatsAppAuthPath();
-  const client = await createWhatsappClient(sessionKey);
 
-  logger.info('SESSION_INITIALIZED', {
-    sessionKey,
-    authPath,
-    authSessionExists: await hasLocalAuthSession(sessionKey, authPath)
-  });
-  startManagedClient(sessionKey, client);
+  try {
+    const client = await createWhatsappClient(sessionKey);
 
-  return { employee, sessionKey };
+    logger.info('SESSION_INITIALIZED', {
+      sessionKey,
+      authPath,
+      authSessionExists: await hasLocalAuthSession(sessionKey, authPath)
+    });
+    startManagedClient(sessionKey, client);
+
+    return { employee, sessionKey };
+  } catch (error) {
+    logger.error(`WhatsApp client setup failed for ${sessionKey}`, serializeError(error));
+    await updateEmployeeSession(sessionKey, {
+      status: 'error',
+      session_status: 'error',
+      last_error: toErrorMessage(error)
+    }).catch(updateError => logger.error('failed to persist connect error', serializeError(updateError)));
+    throw error;
+  }
 }
 
 export async function resyncEmployee(sessionKey: string) {
@@ -453,14 +464,24 @@ export async function resyncEmployee(sessionKey: string) {
   }
 
   const authPath = await resolveWhatsAppAuthPath();
-  const client = await createWhatsappClient(sessionKey);
-  logger.info('SESSION_INITIALIZED', {
-    sessionKey,
-    authPath,
-    authSessionExists: await hasLocalAuthSession(sessionKey, authPath)
-  });
-  startManagedClient(sessionKey, client);
-  return true;
+  try {
+    const client = await createWhatsappClient(sessionKey);
+    logger.info('SESSION_INITIALIZED', {
+      sessionKey,
+      authPath,
+      authSessionExists: await hasLocalAuthSession(sessionKey, authPath)
+    });
+    startManagedClient(sessionKey, client);
+    return true;
+  } catch (error) {
+    logger.error(`WhatsApp client resync failed for ${sessionKey}`, serializeError(error));
+    await updateEmployeeSession(sessionKey, {
+      status: 'error',
+      session_status: 'error',
+      last_error: toErrorMessage(error)
+    }).catch(updateError => logger.error('failed to persist resync error', serializeError(updateError)));
+    throw error;
+  }
 }
 
 export async function disconnectEmployee(sessionKey: string) {

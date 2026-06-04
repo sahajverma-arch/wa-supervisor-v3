@@ -5,14 +5,24 @@ import { getChat } from '../services/chat.service.js';
 import { getMessagesForChat } from '../services/message.service.js';
 import { whatsappService } from '../services/whatsapp.service.js';
 import { logger } from '../utils/logger.js';
+import { serializeError } from '../utils/errors.js';
 import { supabase } from '../supabase/client.js';
 import { deleteEmployeeSession } from '../whatsapp/manager.js';
 import { getSocketServer } from '../socket/index.js';
 import { socketEvents } from '../socket/events.js';
 
 export async function connectEmployeeHandler(_req: Request, res: Response) {
-  const { employee, sessionKey } = await whatsappService.connectEmployee();
-  res.status(201).json({ employee, sessionKey });
+  try {
+    const { employee, sessionKey } = await whatsappService.connectEmployee();
+    res.status(201).json({ employee, sessionKey });
+  } catch (error) {
+    const serializedError = serializeError(error);
+    logger.error('connectEmployee failed', serializedError);
+    res.status(503).json({
+      error: 'Unable to initialize WhatsApp session',
+      detail: serializedError
+    });
+  }
 }
 
 export async function disconnectEmployeeHandler(req: Request, res: Response) {

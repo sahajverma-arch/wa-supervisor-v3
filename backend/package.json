@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/server.ts",
-    "chrome:install": "puppeteer browsers install chrome",
+    "chrome:install": "node scripts/install-chrome.cjs",
     "build": "npm run chrome:install && tsc -p tsconfig.json",
     "start": "node dist/server.js"
   },
